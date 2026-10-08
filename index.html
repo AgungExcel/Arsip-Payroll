@@ -12,6 +12,10 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <!-- SheetJS untuk Download Excel (.xlsx) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- Flatpickr (Custom Datepicker) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://npmcdn.com/flatpickr/dist/l10n/id.js"></script>
     
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -65,6 +69,15 @@
         @keyframes fadeInUp {
             from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Custom Styles for Flatpickr Holiday */
+        .flatpickr-day.is-holiday {
+            color: #e11d48 !important; /* Tailwind rose-600 */
+            font-weight: bold;
+        }
+        .flatpickr-day.is-holiday.selected {
+            color: #ffffff !important;
         }
     </style>
 </head>
@@ -198,11 +211,11 @@
                         <div class="grid grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-[10px] uppercase text-slate-500 mb-1">Mulai</label>
-                                <input type="date" id="start-date" class="input-modern py-2 text-sm">
+                                <input type="text" id="start-date" class="input-modern py-2 text-sm bg-white" placeholder="Pilih Tanggal">
                             </div>
                             <div>
                                 <label class="block text-[10px] uppercase text-slate-500 mb-1">Selesai</label>
-                                <input type="date" id="end-date" class="input-modern py-2 text-sm">
+                                <input type="text" id="end-date" class="input-modern py-2 text-sm bg-white" placeholder="Pilih Tanggal">
                             </div>
                         </div>
                     </div>
@@ -224,10 +237,19 @@
                     <div>
                         <h2 class="text-base font-bold text-slate-800">Riwayat Tersimpan (Lokal)</h2>
                     </div>
-                    <!-- Tombol Export Excel -->
-                    <button onclick="exportToExcel()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium py-2 px-4 rounded-md shadow-sm transition-colors flex items-center gap-2">
-                        <i class="fas fa-file-excel"></i> Download .xlsx
-                    </button>
+                    <div class="flex items-center gap-3 w-full sm:w-auto">
+                        <!-- Search Riwayat -->
+                        <div class="relative w-full sm:w-48 md:w-56">
+                            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                <i class="fas fa-search text-slate-400 text-xs"></i>
+                            </div>
+                            <input type="text" id="history-search" class="input-modern pl-8 py-2 text-xs w-full" placeholder="Cari data riwayat...">
+                        </div>
+                        <!-- Tombol Export Excel -->
+                        <button onclick="exportToExcel()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium py-2 px-4 rounded-md shadow-sm transition-colors flex items-center gap-2 whitespace-nowrap">
+                            <i class="fas fa-file-excel"></i> Download .xlsx
+                        </button>
+                    </div>
                 </div>
                 
                 <div class="flex-1 overflow-auto bg-white rounded-b-xl">
@@ -311,6 +333,41 @@
         let leaveTypes = JSON.parse(localStorage.getItem('arsipLeaveTypes_v3')) || [
             "Cuti Hamil", "Cuti Kematian", "Cuti Pernikahan", "Cuti Tahunan", "Cuti Sakit"
         ];
+
+        // Daftar Hari Libur Nasional (Simulasi untuk 2026/Umum)
+        // Format YYYY-MM-DD
+        const nationalHolidays = [
+            "2026-01-01", "2026-02-17", "2026-03-19", "2026-03-20", 
+            "2026-03-21", "2026-04-03", "2026-05-01", "2026-05-14", 
+            "2026-05-27", "2026-06-01", "2026-06-16", "2026-08-17", 
+            "2026-08-26", "2026-12-25"
+        ];
+
+        // Inisialisasi Flatpickr (Custom Date Picker)
+        const flatpickrConfig = {
+            dateFormat: "Y-m-d",
+            altInput: true,
+            altFormat: "d M Y",
+            locale: "id",
+            onDayCreate: function(dObj, dStr, fp, dayElem) {
+                const dateObj = dayElem.dateObj;
+                const dayOfWeek = dateObj.getDay(); // 0 = Minggu, 6 = Sabtu
+                
+                // Format tanggal ke YYYY-MM-DD untuk cek libur nasional
+                const localDateStr = [
+                    dateObj.getFullYear(),
+                    String(dateObj.getMonth() + 1).padStart(2, '0'),
+                    String(dateObj.getDate()).padStart(2, '0')
+                ].join('-');
+
+                // Warnai merah jika Sabtu, Minggu, atau Hari Libur Nasional
+                if (dayOfWeek === 0 || dayOfWeek === 6 || nationalHolidays.includes(localDateStr)) {
+                    dayElem.classList.add('is-holiday');
+                }
+            }
+        };
+        const startPicker = flatpickr("#start-date", flatpickrConfig);
+        const endPicker = flatpickr("#end-date", flatpickrConfig);
 
         // Update Jam Realtime
         function updateClock() {
@@ -461,6 +518,46 @@
             }
         });
 
+        // Fungsi Hitung Masa Kerja Otomatis
+        function calculateTenure(joinDateStr) {
+            if (!joinDateStr || joinDateStr === '-' || joinDateStr.trim() === '') return null;
+            
+            // Konversi dari format "17-Jul-2017" atau sejenisnya
+            let joinDate = new Date(joinDateStr);
+            
+            // Fallback parsing manual jika invalid
+            if (isNaN(joinDate.getTime())) {
+                const monthsIndo = {"Jan":0,"Feb":1,"Mar":2,"Apr":3,"Mei":4,"Jun":5,"Jul":6,"Ags":7,"Sep":8,"Okt":9,"Nov":10,"Des":11};
+                const parts = joinDateStr.split(/[-\s/]/);
+                if(parts.length >= 3) {
+                    const d = parseInt(parts[0]);
+                    const y = parseInt(parts[2].length === 2 ? `20${parts[2]}` : parts[2]);
+                    const mName = parts[1].substring(0,3);
+                    const m = (monthsIndo[mName] !== undefined) ? monthsIndo[mName] : parseInt(parts[1]) - 1;
+                    joinDate = new Date(y, m, d);
+                }
+            }
+
+            if (isNaN(joinDate.getTime())) return null;
+
+            const today = new Date();
+            let years = today.getFullYear() - joinDate.getFullYear();
+            let months = today.getMonth() - joinDate.getMonth();
+            let days = today.getDate() - joinDate.getDate();
+
+            if (days < 0) {
+                months--;
+            }
+            if (months < 0) {
+                years--;
+                months += 12;
+            }
+
+            if (years === 0 && months === 0) return `Baru Bergabung`;
+            if (years === 0) return `${months} Bulan`;
+            return `${years} Tahun, ${months} Bulan`;
+        }
+
         function selectEmployee(emp) {
             currentSelectedEmployee = emp;
             searchInput.value = `${emp.id} - ${emp.name}`;
@@ -473,14 +570,16 @@
             document.getElementById('emp-section').textContent = emp.section || '-';
             document.getElementById('emp-join').textContent = emp.joinDate || '-';
             
-            // Perbaikan Masa Kerja agar jika kosong tidak error
+            // Hitung Masa Kerja Otomatis
+            const calculatedTenure = calculateTenure(emp.joinDate);
             const tenureEl = document.getElementById('emp-tenure');
-            if(emp.tenure) {
-                tenureEl.textContent = emp.tenure;
+            
+            if(calculatedTenure) {
+                tenureEl.textContent = calculatedTenure;
                 tenureEl.className = "bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded";
             } else {
-                tenureEl.textContent = "Data Kosong";
-                tenureEl.className = "bg-slate-100 text-slate-500 px-2 py-0.5 rounded";
+                tenureEl.textContent = "Format Tgl Tidak Dikenali";
+                tenureEl.className = "bg-rose-50 text-rose-600 px-2 py-0.5 border border-rose-100 rounded";
             }
 
             // Tampilkan panel
@@ -583,8 +682,10 @@
             if(!document.getElementById('leave-type').value) leaveTypeSelect.value = "";
             
             document.getElementById('leave-notes').value = record.notes || '';
-            document.getElementById('start-date').value = record.startDate || '';
-            document.getElementById('end-date').value = record.endDate || '';
+            
+            // Set value ke Flatpickr
+            startPicker.setDate(record.startDate || '');
+            endPicker.setDate(record.endDate || '');
 
             const btn = document.getElementById('submit-btn');
             btn.innerHTML = '<i class="fas fa-sync-alt"></i> Update Arsip';
@@ -657,22 +758,42 @@
             
             setTimeout(() => {
                 resetSearch();
+                startPicker.clear();
+                endPicker.clear();
                 btn.classList.replace('bg-emerald-600', 'bg-blue-600');
                 btn.classList.replace('hover:bg-emerald-700', 'hover:bg-blue-700');
                 btn.classList.replace('shadow-emerald-200', 'shadow-blue-200');
             }, 1000);
         });
 
-        function renderHistoryTable() {
+        // Fitur Pencarian Riwayat
+        document.getElementById('history-search').addEventListener('input', function(e) {
+            renderHistoryTable(e.target.value);
+        });
+
+        function renderHistoryTable(searchTerm = '') {
             const tbody = document.getElementById('history-table-body');
             tbody.innerHTML = '';
             
-            if (archivedLeaves.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="5" class="px-4 py-10 text-center text-slate-400 text-sm">Belum ada arsip tersimpan.</td></tr>`;
+            let filteredData = archivedLeaves;
+            
+            // Filter data jika ada input pencarian
+            if (searchTerm.trim() !== '') {
+                const lowerTerm = searchTerm.toLowerCase();
+                filteredData = archivedLeaves.filter(record => 
+                    record.empName.toLowerCase().includes(lowerTerm) ||
+                    record.empId.toLowerCase().includes(lowerTerm) ||
+                    record.leaveType.toLowerCase().includes(lowerTerm) ||
+                    (record.notes && record.notes.toLowerCase().includes(lowerTerm))
+                );
+            }
+
+            if (filteredData.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="5" class="px-4 py-10 text-center text-slate-400 text-sm">Belum ada arsip tersimpan atau data tidak ditemukan.</td></tr>`;
                 return;
             }
 
-            archivedLeaves.forEach(record => {
+            filteredData.forEach(record => {
                 const tr = document.createElement('tr');
                 tr.className = 'hover:bg-slate-50 transition-colors group';
                 
